@@ -64,7 +64,11 @@ footer{background:#071b38;color:white;text-align:center;padding:24px}
 </section>
 <section id="seats">
 <h2>🎟️ Choose Your Seats</h2>
-<div class="seat-panel">
+<div class="seat-panel"><h3>Choose Ticket Category</h3>
+<select id="ticketType" style="padding:12px;width:100%;font-size:17px;margin-bottom:20px;">
+<option value="5000">VIP - KSh 5,000</option>
+<option value="2500" selected>Regular - KSh 2,500</option>
+</select>
 <p>🔵 Available　🔴 Selected　⚪ Unavailable</p>
 <div class="pitch">⚽ PLAYING FIELD ⚽</div>
 <div id="seatGrid" class="seat-grid"></div>
@@ -95,5 +99,73 @@ footer{background:#071b38;color:white;text-align:center;padding:24px}
 <footer>
 <p>© 2026 Talanta Tickets · All Rights Reserved.</p>
 </footer>
+
+<script>
+const seatGrid = document.getElementById("seatGrid");
+const ticketType = document.getElementById("ticketType");
+const selectedSeatsInput = document.getElementById("selectedSeats");
+const seatSummary = document.getElementById("seatSummary");
+const totalSummary = document.getElementById("totalSummary");
+const bookingTotal = document.getElementById("bookingTotal");
+
+let selectedSeats = [];
+
+const unavailableSeats = [5, 12, 19, 26];
+
+for (let i = 1; i <= 32; i++) {
+  const seat = document.createElement("button");
+  seat.type = "button";
+  seat.textContent = "S" + i;
+  seat.className = "seat";
+
+  if (unavailableSeats.includes(i)) {
+    seat.classList.add("taken");
+    seat.disabled = true;
+  } else {
+    seat.addEventListener("click", () => {
+      if (selectedSeats.includes(i)) {
+        selectedSeats = selectedSeats.filter(s => s !== i);
+        seat.classList.remove("selected");
+      } else {
+        selectedSeats.push(i);
+        seat.classList.add("selected");
+      }
+      updateTotal();
+    });
+  }
+
+  seatGrid.appendChild(seat);
+}
+
+function updateTotal() {
+  const price = Number(ticketType.value);
+  const total = selectedSeats.length * price;
+  const names = selectedSeats.map(s => "S" + s).join(", ");
+
+  seatSummary.textContent =
+    "Selected seats: " + (names || "None");
+
+  totalSummary.textContent = "Total: KSh " + total;
+  bookingTotal.textContent = "Total: KSh " + total;
+  selectedSeatsInput.value = names;
+}
+
+ticketType.addEventListener("change", updateTotal);
+
+document.getElementById("bookingForm").addEventListener("submit", function(e) {
+  e.preventDefault();
+
+  if (selectedSeats.length === 0) {
+    alert("Please select at least one seat.");
+    return;
+  }
+
+  alert("Booking request prepared! Total: KSh " +
+    (selectedSeats.length * Number(ticketType.value)));
+});
+
+updateTotal();
+</script>
 </body>
 </html>
+
