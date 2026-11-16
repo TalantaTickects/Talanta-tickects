@@ -5,167 +5,243 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Talanta Tickets | Bayern Munich vs Ajax</title>
+
 <style>
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{margin:0;font-family:Arial,sans-serif;background:#f4f6fa;color:#172033}
+
 header{background:#071b38;color:white;text-align:center;padding:22px 12px}
 header h1{color:#29d391;font-size:27px}
-nav{background:#102c50;padding:14px;text-align:center;position:sticky;top:0}
+
+nav{background:#102c50;padding:14px;text-align:center;position:sticky;top:0;z-index:10}
 nav a{color:white;text-decoration:none;margin:8px;font-weight:bold}
-.hero{background:linear-gradient(135deg,#071b38,#12385c);color:white;text-align:center;padding:55px 20px}
+
+.hero{
+background:linear-gradient(90deg,rgba(7,27,56,.8),rgba(7,27,56,.35)),url("stadium-exterior.jpg") center/cover;
+color:white;text-align:center;padding:85px 20px
+}
 .hero h2{font-size:36px}
-.btn{display:inline-block;background:#19b979;color:white;padding:14px 24px;border:0;border-radius:8px;text-decoration:none;font-weight:bold}
+
+.btn{display:inline-block;background:#19b979;color:white;padding:14px 24px;border:0;border-radius:8px;text-decoration:none;font-weight:bold;cursor:pointer}
+
 section{padding:35px 18px;text-align:center}
-.ticket,.booking,.seat-panel{background:white;padding:24px;border-radius:13px;box-shadow:0 3px 12px #0001;max-width:850px;margin:20px auto}
+
+.ticket,.booking,.seat-panel{
+background:white;padding:24px;border-radius:13px;
+box-shadow:0 3px 12px #0001;max-width:850px;margin:20px auto
+}
+
 .price{color:#079b68;font-size:25px;font-weight:bold}
+
+.gallery{
+display:grid;
+grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+gap:15px;max-width:1050px;margin:25px auto
+}
+.gallery img{
+width:100%;height:240px;object-fit:cover;border-radius:12px
+}
+
 .note{background:#fff4d6;padding:14px;border-radius:8px;margin:15px auto;max-width:700px}
+
 .booking{max-width:600px;text-align:left}
 label{display:block;margin:14px 0 6px;font-weight:bold}
-input{width:100%;padding:13px;margin:5px 0 10px;border:1px solid #ccc;border-radius:7px;font-size:16px}
+input,select{width:100%;padding:13px;margin:5px 0 10px;border:1px solid #ccc;border-radius:7px;font-size:16px}
+
 .booking button{width:100%;margin-top:14px}
+
 .seat-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:7px;max-width:500px;margin:20px auto}
 .seat{border:0;border-radius:6px;background:#4f86e8;color:white;padding:12px 2px;cursor:pointer}
 .seat.taken{background:#c6ccd5;color:#596273}
 .seat.selected{background:#d71920}
+
 .pitch{max-width:460px;margin:20px auto;padding:35px;border:2px solid #83c99c;border-radius:12px;background:#e8f5eb;color:#176b43}
+
 footer{background:#071b38;color:white;text-align:center;padding:24px}
+
+@media(max-width:600px){
+nav a{display:inline-block;margin:6px;font-size:13px}
+.hero h2{font-size:28px}
+.gallery img{height:210px}
+}
 </style>
 </head>
+
 <body>
+
 <header>
 <h1>⚽ TALANTA TICKETS</h1>
 <p>Your Game. Your Ticket. Your Experience.</p>
 </header>
+
 <nav>
 <a href="#home">Home</a>
+<a href="#gallery">Gallery</a>
 <a href="#match">Match</a>
 <a href="#seats">Seats</a>
 <a href="#booking">Book Tickets</a>
 <a href="#contact">Contact</a>
 </nav>
+
 <div class="hero" id="home">
 <h2>BAYERN MUNICH VS AJAX</h2>
 <p>Tuesday, 5 January 2027 · Kick-off 20:15</p>
 <p>Raila Odinga International Stadium, Nairobi</p>
-<p class="price">KSh 2,500 per seat</p>
+<p class="price">Tickets from KSh 2,500</p>
 <a href="#seats" class="btn">Choose Your Seats</a>
 </div>
+
+<section id="gallery">
+<h2>🏟️ Our Stadium Gallery</h2>
+<p>Explore our stadium.</p>
+
+<div class="gallery">
+<img src="stadium-exterior.jpg" alt="Stadium exterior">
+<img src="stadium-interior.png" alt="Stadium interior">
+<img src="stadium-seating.png" alt="Stadium seating">
+</div>
+</section>
+
 <section id="match">
 <h2>⚽ Upcoming Match</h2>
+
 <div class="ticket">
 <h3>Bayern Munich vs Ajax</h3>
 <p>📅 5 January 2027 · 20:15</p>
 <p>📍 Raila Odinga International Stadium, Nairobi</p>
-<p class="price">KSh 2,500 per seat</p>
+<p class="price">VIP: KSh 5,000</p>
+<p class="price">Regular: KSh 2,500</p>
 <a href="#booking" class="btn">Book Now</a>
 </div>
-<div class="note">Blue seats are available in this demonstration. Confirm actual stadium availability before selling tickets.</div>
+
+<div class="note">
+Blue seats are available in this demonstration. Confirm actual stadium availability before selling tickets.
+</div>
 </section>
+
 <section id="seats">
 <h2>🎟️ Choose Your Seats</h2>
-<div class="seat-panel"><h3>Choose Ticket Category</h3>
-<select id="ticketType" style="padding:12px;width:100%;font-size:17px;margin-bottom:20px;">
+
+<div class="seat-panel">
+<h3>Choose Ticket Category</h3>
+
+<select id="ticketType">
 <option value="5000">VIP - KSh 5,000</option>
 <option value="2500" selected>Regular - KSh 2,500</option>
 </select>
+
 <p>🔵 Available　🔴 Selected　⚪ Unavailable</p>
+
 <div class="pitch">⚽ PLAYING FIELD ⚽</div>
 <div id="seatGrid" class="seat-grid"></div>
+
 <p id="seatSummary">Selected seats: None</p>
 <p id="totalSummary">Total: KSh 0</p>
 </div>
 </section>
+
 <section id="booking">
 <h2>Book Your Tickets</h2>
+
 <div class="booking">
 <form id="bookingForm">
+
 <label for="customer">Your full name</label>
 <input type="text" id="customer" placeholder="Enter your name" required>
+
 <label for="phone">Phone number</label>
 <input type="tel" id="phone" placeholder="07XXXXXXXX" required>
+
 <label for="selectedSeats">Selected seat numbers</label>
 <input type="text" id="selectedSeats" placeholder="Choose seats above" readonly required>
+
 <p id="bookingTotal">Total: KSh 0</p>
+
 <button type="submit" class="btn">Submit Booking Request</button>
 </form>
-<p id="result"></p>
+
+<p id="result" role="status"></p>
 </div>
 </section>
+
 <section id="contact">
 <h2>Contact Talanta Tickets</h2>
 <p>Need help with your booking? Contact our team.</p>
 </section>
+
 <footer>
 <p>© 2026 Talanta Tickets · All Rights Reserved.</p>
 </footer>
 
 <script>
-const seatGrid = document.getElementById("seatGrid");
-const ticketType = document.getElementById("ticketType");
-const selectedSeatsInput = document.getElementById("selectedSeats");
-const seatSummary = document.getElementById("seatSummary");
-const totalSummary = document.getElementById("totalSummary");
-const bookingTotal = document.getElementById("bookingTotal");
+const seatGrid=document.getElementById("seatGrid");
+const ticketType=document.getElementById("ticketType");
+const selectedSeatsInput=document.getElementById("selectedSeats");
+const seatSummary=document.getElementById("seatSummary");
+const totalSummary=document.getElementById("totalSummary");
+const bookingTotal=document.getElementById("bookingTotal");
+const result=document.getElementById("result");
 
-let selectedSeats = [];
+let selectedSeats=[];
+const unavailableSeats=[5,12,19,26];
 
-const unavailableSeats = [5, 12, 19, 26];
+for(let i=1;i<=32;i++){
+const seat=document.createElement("button");
+seat.type="button";
+seat.textContent="S"+i;
+seat.className="seat";
 
-for (let i = 1; i <= 32; i++) {
-  const seat = document.createElement("button");
-  seat.type = "button";
-  seat.textContent = "S" + i;
-  seat.className = "seat";
-
-  if (unavailableSeats.includes(i)) {
-    seat.classList.add("taken");
-    seat.disabled = true;
-  } else {
-    seat.addEventListener("click", () => {
-      if (selectedSeats.includes(i)) {
-        selectedSeats = selectedSeats.filter(s => s !== i);
-        seat.classList.remove("selected");
-      } else {
-        selectedSeats.push(i);
-        seat.classList.add("selected");
-      }
-      updateTotal();
-    });
-  }
-
-  seatGrid.appendChild(seat);
+if(unavailableSeats.includes(i)){
+seat.classList.add("taken");
+seat.disabled=true;
+}else{
+seat.addEventListener("click",()=>{
+if(selectedSeats.includes(i)){
+selectedSeats=selectedSeats.filter(s=>s!==i);
+seat.classList.remove("selected");
+}else{
+selectedSeats.push(i);
+seat.classList.add("selected");
+}
+updateTotal();
+});
+}
+seatGrid.appendChild(seat);
 }
 
-function updateTotal() {
-  const price = Number(ticketType.value);
-  const total = selectedSeats.length * price;
-  const names = selectedSeats.map(s => "S" + s).join(", ");
+function updateTotal(){
+const price=Number(ticketType.value);
+const total=selectedSeats.length*price;
+const names=selectedSeats.slice().sort((a,b)=>a-b).map(s=>"S"+s).join(", ");
 
-  seatSummary.textContent =
-    "Selected seats: " + (names || "None");
-
-  totalSummary.textContent = "Total: KSh " + total;
-  bookingTotal.textContent = "Total: KSh " + total;
-  selectedSeatsInput.value = names;
+seatSummary.textContent="Selected seats: "+(names||"None");
+totalSummary.textContent="Total: KSh "+total.toLocaleString("en-KE");
+bookingTotal.textContent="Total: KSh "+total.toLocaleString("en-KE");
+selectedSeatsInput.value=names;
 }
 
-ticketType.addEventListener("change", updateTotal);
+ticketType.addEventListener("change",updateTotal);
 
-document.getElementById("bookingForm").addEventListener("submit", function(e) {
-  e.preventDefault();
+document.getElementById("bookingForm").addEventListener("submit",function(e){
+e.preventDefault();
 
-  if (selectedSeats.length === 0) {
-    alert("Please select at least one seat.");
-    return;
-  }
+if(selectedSeats.length===0){
+result.textContent="Please select at least one seat.";
+return;
+}
 
-  alert("Booking request prepared! Total: KSh " +
-    (selectedSeats.length * Number(ticketType.value)));
+const total=selectedSeats.length*Number(ticketType.value);
+
+result.textContent="Booking request prepared. Total: KSh "+
+total.toLocaleString("en-KE")+
+". This demonstration does not yet save bookings or process payments.";
 });
 
 updateTotal();
 </script>
+
 </body>
 </html>
+
 
