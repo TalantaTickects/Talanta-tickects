@@ -4,31 +4,53 @@ export default {
     const url = new URL(request.url);
 
     // Health check
-    if (url.pathname === "/") {
+    if (url.pathname === "/" && request.method === "GET") {
       return Response.json({
         success: true,
-        message: "TalantaTickects Payment Worker is running"
+        message: "Talanta Tickets Production Worker is running"
       });
     }
 
-    // Initiate M-Pesa STK Push
+    // M-Pesa STK Push
     if (url.pathname === "/api/mpesa/stkpush" && request.method === "POST") {
       try {
         const { phone, amount } = await request.json();
 
-        if (!phone || !amount || Number(amount) <= 0) {
+        const normalizedPhone = String(phone || "").replace(/\D/g, "");
+        const paymentAmount = Number(amount);
+
+        if (
+          !/^254[17]\d{8}$/.test(normalizedPhone) ||
+          !Number.isSafeInteger(paymentAmount) ||
+          paymentAmount < 1
+        ) {
           return Response.json(
-            { success: false, message: "Invalid phone or amount" },
+            { success: false, message: "Enter a valid Kenyan phone number and whole-number amount." },
             { status: 400 }
           );
         }
 
+        if (
+          !env.MPESA_CONSUMER_KEY ||
+          !env.MPESA_CONSUMER_SECRET ||
+          !env.MPESA_SHORTCODE ||
+          !env.MPESA_PASSKEY ||
+          !env.MPESA_CALLBACK_URL ||
+          !env.DB
+        ) {
+          return Response.json(
+            { success: false, message: "Payment service is not fully configured." },
+            { status: 500 }
+          );
+        }
+
+        // Get production access token
         const credentials = btoa(
           `${env.MPESA_CONSUMER_KEY}:${env.MPESA_CONSUMER_SECRET}`
         );
 
         const tokenResponse = await fetch(
-          "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+          "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
           {
             headers: {
               Authorization: `Basic ${credentials}`
@@ -38,13 +60,14 @@ export default {
 
         const tokenData = await tokenResponse.json();
 
-        if (!tokenData.access_token) {
+        if (!tokenResponse.ok || !tokenData.access_token) {
           return Response.json(
-            { success: false, message: "Failed to obtain M-Pesa token" },
+            { success: false, message: "Could not authenticate with Safaricom." },
             { status: 502 }
           );
         }
 
+        // Generate timestamp and password
         const timestamp = new Date()
           .toISOString()
           .replace(/[-:TZ.]/g, "")
@@ -54,8 +77,9 @@ export default {
           `${env.MPESA_SHORTCODE}${env.MPESA_PASSKEY}${timestamp}`
         );
 
+        // Send production STK Push
         const stkResponse = await fetch(
-          "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+          "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
           {
             method: "POST",
             headers: {
@@ -66,13 +90,13 @@ export default {
               BusinessShortCode: env.MPESA_SHORTCODE,
               Password: password,
               Timestamp: timestamp,
-              TransactionType: "CustomerPayBillOnline",
-              Amount: Math.round(Number(amount)),
-              PartyA: phone,
+              TransactionType: "CustomerBuyGoodsOnline",
+              Amount: paymentAmount,
+              PartyA: normalizedPhone,
               PartyB: env.MPESA_SHORTCODE,
-              PhoneNumber: phone,
+              PhoneNumber: normalizedPhone,
               CallBackURL: env.MPESA_CALLBACK_URL,
-              AccountReference: "TalantaTickects",
+              AccountReference: "TalantaTickets",
               TransactionDesc: "Ticket Payment"
             })
           }
@@ -80,9 +104,13 @@ export default {
 
         const result = await stkResponse.json();
 
-        if (!stkResponse.ok) {
+        if (!stkResponse.ok || result.ResponseCode !== "0") {
           return Response.json(
-            { success: false, result },
+            {
+              success: false,
+              message: "Safaricom did not accept the STK Push request.",
+              result
+            },
             { status: 502 }
           );
         }
@@ -90,11 +118,11 @@ export default {
         if (result.CheckoutRequestID) {
           await env.DB.prepare(
             `INSERT INTO payments
-            (phone, amount, checkout_request_id, status)
-            VALUES (?, ?, ?, ?)`
+             (phone, amount, checkout_request_id, status)
+             VALUES (?, ?, ?, ?)`
           ).bind(
-            phone,
-            Math.round(Number(amount)),
+            normalizedPhone,
+            paymentAmount,
             result.CheckoutRequestID,
             "PENDING"
           ).run();
@@ -102,31 +130,33 @@ export default {
 
         return Response.json({
           success: true,
-          message: "STK Push sent",
-          result
+          message: "STK Push request accepted. Check your phone.",
+          checkoutRequestId: result.CheckoutRequestID,
+          merchantRequestId: result.MerchantRequestID
         });
 
       } catch (error) {
         return Response.json(
-          { success: false, message: error.message },
+          { success: false, message: "Payment request failed." },
           { status: 500 }
         );
       }
     }
 
-    // Safaricom payment callback
+    // Safaricom callback
     if (url.pathname === "/api/mpesa/callback" && request.method === "POST") {
       try {
         const callback = await request.json();
         const data = callback.Body?.stkCallback;
 
-        if (!data) {
-          return Response.json({ ResultCode: 0, ResultDesc: "Accepted" });
+        if (!data?.CheckoutRequestID) {
+          return Response.json({
+            ResultCode: 0,
+            ResultDesc: "Accepted"
+          });
         }
 
-        const checkoutId = data.CheckoutRequestID;
         const success = data.ResultCode === 0;
-
         const metadata = data.CallbackMetadata?.Item || [];
 
         const receipt = metadata.find(
@@ -140,7 +170,7 @@ export default {
         ).bind(
           success ? "PAID" : "FAILED",
           receipt,
-          checkoutId
+          data.CheckoutRequestID
         ).run();
 
         return Response.json({
