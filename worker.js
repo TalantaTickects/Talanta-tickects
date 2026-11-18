@@ -1,194 +1,481 @@
 
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type"
+    }
+  });
+}
+
+function normalizePhone(phone) {
+  let value = String(phone || "").replace(/\D/g, "");
+
+  if (value.startsWith("0")) value = "254" + value.slice(1);
+  if (value.startsWith("7") || value.startsWith("1")) {
+    value = "254" + value;
+  }
+
+  return /^254[17]\d{8}$/.test(value) ? value : null;
+}
+
+function timestamp() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Africa/Nairobi",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(new Date());
+
+  const values = {};
+  for (const part of parts) {
+    values[part.type] = part.value;
+  }
+
+  return values.year + values.month + values.day +
+    values.hour + values.minute + values.second;
+}
+
+async function getToken(env) {
+  const credentials = btoa(
+    env.MPESA_CONSUMER_KEY + ":" + env.MPESA_CONSUMER_SECRET
+  );
+
+  const response = await fetch(
+    "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+    {
+      headers: { Authorization: "Basic " + credentials }
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.access_token) {
+    throw new Error("Safaricom authentication failed");
+  }
+
+  return data.access_token;
+}
+
+function getPassword(env, time) {
+  return btoa(
+    env.MPESA_SHORTCODE + env.MPESA_PASSKEY + time
+  );
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // Health check
+    if (request.method === "OPTIONS") {
+      return json({ success: true });
+    }
+
     if (url.pathname === "/" && request.method === "GET") {
-      return Response.json({
+      return json({
         success: true,
-        message: "Talanta Tickets Production Worker is running"
+        message: "Talanta Tickets Worker is running"
       });
     }
 
-    // M-Pesa STK Push
-    if (url.pathname === "/api/mpesa/stkpush" && request.method === "POST") {
-      try {
-        const { phone, amount } = await request.json();
+    if (!env.DB) {
+      return json({ success: false, message: "Database is not connected." }, 500);
+    }
 
-        const normalizedPhone = String(phone || "").replace(/\D/g, "");
-        const paymentAmount = Number(amount);
+    // CREATE BOOKING AND RESERVE SEATS
+    if (url.pathname === "/api/bookings" && request.method === "POST") {
+      try {
+        const body = await request.json();
+
+        const customerName = String(body.customerName || "").trim();
+        const phone = normalizePhone(body.phone);
+        const seats = body.seats;
+        const ticketType = body.ticketType;
+
+        if (!customerName || customerName.length > 100 || !phone) {
+          return json({
+            success: false,
+            message: "Enter a valid name and Kenyan phone number."
+          }, 400);
+        }
 
         if (
-          !/^254[17]\d{8}$/.test(normalizedPhone) ||
-          !Number.isSafeInteger(paymentAmount) ||
-          paymentAmount < 1
+          !Array.isArray(seats) ||
+          seats.length < 1 ||
+          seats.length > 32 ||
+          !seats.every(s => Number.isInteger(s) && s >= 1 && s <= 32) ||
+          new Set(seats).size !== seats.length
         ) {
-          return Response.json(
-            { success: false, message: "Enter a valid Kenyan phone number and whole-number amount." },
-            { status: 400 }
+          return json({
+            success: false,
+            message: "Please select valid seats."
+          }, 400);
+        }
+
+        if (!["VIP", "Regular"].includes(ticketType)) {
+          return json({
+            success: false,
+            message: "Invalid ticket category."
+          }, 400);
+        }
+
+        // These seats are unavailable in the current website.
+        const unavailable = [5, 12, 19, 26];
+
+        if (seats.some(s => unavailable.includes(s))) {
+          return json({
+            success: false,
+            message: "One or more selected seats are unavailable."
+          }, 409);
+        }
+
+        const sortedSeats = [...seats].sort((a, b) => a - b);
+        const price = ticketType === "VIP" ? 5000 : 2500;
+        const amount = sortedSeats.length * price;
+        const bookingId = crypto.randomUUID();
+
+        const placeholders = sortedSeats.map(() => "?").join(",");
+
+        const occupied = await env.DB.prepare(
+          `SELECT seat_number FROM booking_seats
+           WHERE active = 1 AND seat_number IN (${placeholders})`
+        ).bind(...sortedSeats).all();
+
+        if (occupied.results.length > 0) {
+          return json({
+            success: false,
+            message: "Some seats have already been booked. Please choose other seats."
+          }, 409);
+        }
+
+        const statements = [
+          env.DB.prepare(
+            `INSERT INTO bookings
+             (id, customer_name, phone, seats, ticket_type, amount, status)
+             VALUES (?, ?, ?, ?, ?, ?, 'PENDING')`
+          ).bind(
+            bookingId,
+            customerName,
+            phone,
+            JSON.stringify(sortedSeats),
+            ticketType,
+            amount
+          )
+        ];
+
+        for (const seat of sortedSeats) {
+          statements.push(
+            env.DB.prepare(
+              `INSERT INTO booking_seats
+               (booking_id, seat_number, active)
+               VALUES (?, ?, 1)`
+            ).bind(bookingId, seat)
           );
+        }
+
+        await env.DB.batch(statements);
+
+        return json({
+          success: true,
+          bookingId,
+          amount,
+          message: "Booking saved. You can now request payment."
+        });
+
+      } catch (error) {
+        return json({
+          success: false,
+          message: "Booking could not be saved. The seats may have just been taken."
+        }, 409);
+      }
+    }
+
+    // START ONE M-PESA PAYMENT FOR THE WHOLE BOOKING
+    if (url.pathname === "/api/mpesa/stkpush" && request.method === "POST") {
+      let paymentId = null;
+
+      try {
+        const body = await request.json();
+        const bookingId = String(body.bookingId || "");
+
+        if (!bookingId) {
+          return json({
+            success: false,
+            message: "Booking reference is missing."
+          }, 400);
         }
 
         if (
           !env.MPESA_CONSUMER_KEY ||
           !env.MPESA_CONSUMER_SECRET ||
           !env.MPESA_SHORTCODE ||
+          !env.MPESA_TILL_NUMBER ||
           !env.MPESA_PASSKEY ||
-          !env.MPESA_CALLBACK_URL ||
-          !env.DB
+          !env.MPESA_CALLBACK_URL
         ) {
-          return Response.json(
-            { success: false, message: "Payment service is not fully configured." },
-            { status: 500 }
-          );
+          return json({
+            success: false,
+            message: "M-Pesa settings are incomplete."
+          }, 500);
         }
 
-        // Get production access token
-        const credentials = btoa(
-          `${env.MPESA_CONSUMER_KEY}:${env.MPESA_CONSUMER_SECRET}`
-        );
+        const booking = await env.DB.prepare(
+          `SELECT id, phone, amount, status
+           FROM bookings WHERE id = ?`
+        ).bind(bookingId).first();
 
-        const tokenResponse = await fetch(
-          "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
-          {
-            headers: {
-              Authorization: `Basic ${credentials}`
-            }
-          }
-        );
-
-        const tokenData = await tokenResponse.json();
-
-        if (!tokenResponse.ok || !tokenData.access_token) {
-          return Response.json(
-            { success: false, message: "Could not authenticate with Safaricom." },
-            { status: 502 }
-          );
+        if (!booking || booking.status !== "PENDING") {
+          return json({
+            success: false,
+            message: "Booking not found or no longer payable."
+          }, 404);
         }
 
-        // Generate timestamp and password
-        const timestamp = new Date()
-          .toISOString()
-          .replace(/[-:TZ.]/g, "")
-          .slice(0, 14);
+        const previous = await env.DB.prepare(
+          `SELECT id FROM payments
+           WHERE booking_id = ? AND status = 'PENDING'
+           AND checkout_request_id IS NOT NULL`
+        ).bind(bookingId).first();
 
-        const password = btoa(
-          `${env.MPESA_SHORTCODE}${env.MPESA_PASSKEY}${timestamp}`
-        );
+        if (previous) {
+          return json({
+            success: false,
+            message: "A payment prompt has already been requested for this booking."
+          }, 409);
+        }
 
-        // Send production STK Push
+        paymentId = crypto.randomUUID();
+
+        await env.DB.prepare(
+          `INSERT INTO payments
+           (id, booking_id, phone, amount, status)
+           VALUES (?, ?, ?, ?, 'PENDING')`
+        ).bind(
+          paymentId,
+          booking.id,
+          booking.phone,
+          booking.amount
+        ).run();
+
+        const token = await getToken(env);
+        const time = timestamp();
+        const password = getPassword(env, time);
+
         const stkResponse = await fetch(
           "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${tokenData.access_token}`,
+              Authorization: "Bearer " + token,
               "Content-Type": "application/json"
             },
             body: JSON.stringify({
               BusinessShortCode: env.MPESA_SHORTCODE,
               Password: password,
-              Timestamp: timestamp,
+              Timestamp: time,
               TransactionType: "CustomerBuyGoodsOnline",
-              Amount: paymentAmount,
-              PartyA: normalizedPhone,
-              PartyB: env.MPESA_SHORTCODE,
-              PhoneNumber: normalizedPhone,
+              Amount: booking.amount,
+              PartyA: booking.phone,
+              PartyB: env.MPESA_TILL_NUMBER,
+              PhoneNumber: booking.phone,
               CallBackURL: env.MPESA_CALLBACK_URL,
-              AccountReference: "TalantaTickets",
-              TransactionDesc: "Ticket Payment"
+              AccountReference: "TALANTA",
+              TransactionDesc: "TicketPayment"
             })
           }
         );
 
         const result = await stkResponse.json();
 
-        if (!stkResponse.ok || result.ResponseCode !== "0") {
-          return Response.json(
-            {
-              success: false,
-              message: "Safaricom did not accept the STK Push request.",
-              result
-            },
-            { status: 502 }
-          );
-        }
-
-        if (result.CheckoutRequestID) {
+        if (!stkResponse.ok || result.ResponseCode !== "0" ||
+            !result.CheckoutRequestID) {
           await env.DB.prepare(
-            `INSERT INTO payments
-             (phone, amount, checkout_request_id, status)
-             VALUES (?, ?, ?, ?)`
-          ).bind(
-            normalizedPhone,
-            paymentAmount,
-            result.CheckoutRequestID,
-            "PENDING"
-          ).run();
+            `UPDATE payments SET status = 'FAILED' WHERE id = ?`
+          ).bind(paymentId).run();
+
+          return json({
+            success: false,
+            message: "Safaricom did not accept the payment request."
+          }, 502);
         }
 
-        return Response.json({
+        await env.DB.prepare(
+          `UPDATE payments
+           SET checkout_request_id = ?
+           WHERE id = ?`
+        ).bind(result.CheckoutRequestID, paymentId).run();
+
+        return json({
           success: true,
-          message: "STK Push request accepted. Check your phone.",
-          checkoutRequestId: result.CheckoutRequestID,
-          merchantRequestId: result.MerchantRequestID
+          message: "M-Pesa prompt sent. Check your phone and enter your PIN.",
+          bookingId,
+          checkoutRequestId: result.CheckoutRequestID
         });
 
       } catch (error) {
-        return Response.json(
-          { success: false, message: "Payment request failed." },
-          { status: 500 }
-        );
+        if (paymentId) {
+          await env.DB.prepare(
+            `UPDATE payments SET status = 'FAILED' WHERE id = ?`
+          ).bind(paymentId).run().catch(() => {});
+        }
+
+        return json({
+          success: false,
+          message: "Payment request failed. Please contact support before trying again."
+        }, 500);
       }
     }
 
-    // Safaricom callback
+    // CHECK BOOKING AND TICKET STATUS
+    if (
+      request.method === "GET" &&
+      url.pathname.startsWith("/api/bookings/")
+    ) {
+      try {
+        const bookingId = url.pathname.split("/").pop();
+
+        const booking = await env.DB.prepare(
+          `SELECT id, customer_name, amount, status
+           FROM bookings WHERE id = ?`
+        ).bind(bookingId).first();
+
+        if (!booking) {
+          return json({ success: false, message: "Booking not found." }, 404);
+        }
+
+        const tickets = await env.DB.prepare(
+          `SELECT seat_number, ticket_code
+           FROM tickets WHERE booking_id = ?`
+        ).bind(bookingId).all();
+
+        return json({
+          success: true,
+          booking,
+          tickets: tickets.results
+        });
+
+      } catch (error) {
+        return json({
+          success: false,
+          message: "Could not check booking."
+        }, 500);
+      }
+    }
+
+    // SAFARICOM CALLBACK
     if (url.pathname === "/api/mpesa/callback" && request.method === "POST") {
       try {
         const callback = await request.json();
         const data = callback.Body?.stkCallback;
 
         if (!data?.CheckoutRequestID) {
-          return Response.json({
-            ResultCode: 0,
-            ResultDesc: "Accepted"
-          });
+          return json({ ResultCode: 0, ResultDesc: "Accepted" });
         }
 
-        const success = data.ResultCode === 0;
-        const metadata = data.CallbackMetadata?.Item || [];
+        const payment = await env.DB.prepare(
+          `SELECT id, booking_id, status
+           FROM payments WHERE checkout_request_id = ?`
+        ).bind(data.CheckoutRequestID).first();
 
-        const receipt = metadata.find(
+        if (!payment || payment.status === "PAID") {
+          return json({ ResultCode: 0, ResultDesc: "Accepted" });
+        }
+
+        const paid = Number(data.ResultCode) === 0;
+
+        if (!paid) {
+          await env.DB.batch([
+            env.DB.prepare(
+              `UPDATE payments SET status = 'FAILED'
+               WHERE id = ?`
+            ).bind(payment.id),
+
+            env.DB.prepare(
+              `UPDATE bookings SET status = 'FAILED'
+               WHERE id = ? AND status = 'PENDING'`
+            ).bind(payment.booking_id),
+
+            env.DB.prepare(
+              `UPDATE booking_seats SET active = 0
+               WHERE booking_id = ?`
+            ).bind(payment.booking_id)
+          ]);
+
+          return json({ ResultCode: 0, ResultDesc: "Accepted" });
+        }
+
+        const items = data.CallbackMetadata?.Item || [];
+        const receipt = items.find(
           item => item.Name === "MpesaReceiptNumber"
-        )?.Value || null;
+        )?.Value;
 
-        await env.DB.prepare(
-          `UPDATE payments
-           SET status = ?, receipt_number = ?
-           WHERE checkout_request_id = ?`
-        ).bind(
-          success ? "PAID" : "FAILED",
-          receipt,
-          data.CheckoutRequestID
-        ).run();
+        if (!receipt) {
+          return json({
+            ResultCode: 1,
+            ResultDesc: "Payment receipt missing"
+          }, 500);
+        }
 
-        return Response.json({
-          ResultCode: 0,
-          ResultDesc: "Accepted"
-        });
+        const seats = await env.DB.prepare(
+          `SELECT seat_number FROM booking_seats
+           WHERE booking_id = ? AND active = 1`
+        ).bind(payment.booking_id).all();
+
+        const statements = [
+          env.DB.prepare(
+            `UPDATE payments
+             SET status = 'PAID', mpesa_receipt = ?
+             WHERE id = ?`
+          ).bind(String(receipt), payment.id),
+
+          env.DB.prepare(
+            `UPDATE bookings SET status = 'PAID'
+             WHERE id = ? AND status = 'PENDING'`
+          ).bind(payment.booking_id)
+        ];
+
+        for (const item of seats.results) {
+          const ticketCode = crypto.randomUUID()
+            .replace(/-/g, "")
+            .toUpperCase();
+
+          statements.push(
+            env.DB.prepare(
+              `INSERT OR IGNORE INTO tickets
+               (id, booking_id, seat_number, ticket_code)
+               VALUES (?, ?, ?, ?)`
+            ).bind(
+              crypto.randomUUID(),
+              payment.booking_id,
+              String(item.seat_number),
+              ticketCode
+            )
+          );
+        }
+
+        await env.DB.batch(statements);
+
+        return json({ ResultCode: 0, ResultDesc: "Accepted" });
 
       } catch (error) {
-        return Response.json(
-          { ResultCode: 1, ResultDesc: "Callback processing failed" },
-          { status: 500 }
-        );
+        return json({
+          ResultCode: 1,
+          ResultDesc: "Callback processing failed"
+        }, 500);
       }
     }
 
-    return Response.json(
-      { success: false, message: "Not found" },
-      { status: 404 }
-    );
+    return json({
+      success: false,
+      message: "Endpoint not found."
+    }, 404);
   }
 };
+
