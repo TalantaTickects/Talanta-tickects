@@ -24,7 +24,7 @@ color:white;text-align:center;padding:85px 20px
 .btn{display:inline-block;background:#19b979;color:white;padding:14px 24px;border:0;border-radius:8px;text-decoration:none;font-weight:bold;cursor:pointer}
 .btn:disabled{opacity:.6;cursor:not-allowed}
 section{padding:35px 18px;text-align:center}
-.ticket,.booking,.seat-panel{background:white;padding:24px;border-radius:13px;box-shadow:0 3px 12px #0001;max-width:850px;margin:20px auto}
+.ticket,.booking,.seat-panel{background:white;padding:24px;border-radius:13px;box-shadow:0 3px 12px #0001;max-width:1000px;margin:20px auto}
 .price{color:#079b68;font-size:25px;font-weight:bold}
 .gallery{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:15px;max-width:1050px;margin:25px auto}
 .gallery img{width:100%;height:240px;object-fit:cover;border-radius:12px}
@@ -33,11 +33,31 @@ section{padding:35px 18px;text-align:center}
 label{display:block;margin:14px 0 6px;font-weight:bold}
 input,select{width:100%;padding:13px;margin:5px 0 10px;border:1px solid #ccc;border-radius:7px;font-size:16px}
 .booking button{width:100%;margin-top:14px}
-.seat-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:7px;max-width:500px;margin:20px auto}
-.seat{border:0;border-radius:6px;background:#4f86e8;color:white;padding:12px 2px;cursor:pointer}
-.seat.taken{background:#c6ccd5;color:#596273}
+
+.seat-panel{max-width:1100px}
+.seat-grid{
+display:grid;
+grid-template-columns:repeat(10,minmax(0,1fr));
+gap:5px;
+max-width:1000px;
+margin:20px auto;
+}
+.seat{
+border:0;
+border-radius:5px;
+background:#4f86e8;
+color:white;
+padding:10px 2px;
+font-size:11px;
+cursor:pointer;
+min-width:0;
+}
+.seat.taken{background:#c6ccd5;color:#596273;cursor:not-allowed}
 .seat.selected{background:#d71920}
 .pitch{max-width:460px;margin:20px auto;padding:35px;border:2px solid #83c99c;border-radius:12px;background:#e8f5eb;color:#176b43}
+.seat-controls{display:flex;justify-content:center;align-items:center;gap:12px;flex-wrap:wrap;margin:18px auto}
+.seat-controls button{width:auto;margin:0}
+.page-info{font-weight:bold}
 #result{padding:12px;border-radius:8px;overflow-wrap:anywhere;line-height:1.6}
 #result:empty{display:none}
 
@@ -52,11 +72,14 @@ input,select{width:100%;padding:13px;margin:5px 0 10px;border:1px solid #ccc;bor
 .print-button{margin:15px auto}
 
 footer{background:#071b38;color:white;text-align:center;padding:24px}
+
 @media(max-width:600px){
 nav a{display:inline-block;margin:6px;font-size:13px}
 .hero h2{font-size:28px}
 .gallery img{height:210px}
-.seat{padding:10px 1px;font-size:12px}
+.seat-grid{grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}
+.seat{padding:11px 2px;font-size:11px}
+.seat-panel{padding:12px}
 }
 @media print{
 body *{visibility:hidden}
@@ -113,21 +136,35 @@ body *{visibility:hidden}
 <a href="#booking" class="btn">Book Now</a>
 </div>
 <div class="note">
-Blue seats are available. Confirm actual stadium availability before selling tickets.
+Seat numbers are provisional. Confirm the actual stadium seating plan and ticket inventory before selling.
 </div>
 </section>
 
 <section id="seats">
 <h2>🎟️ Choose Your Seats</h2>
 <div class="seat-panel">
+
 <h3>Choose Ticket Category</h3>
 <select id="ticketType">
 <option value="5000">VIP - KSh 5,000</option>
 <option value="2500" selected>Regular - KSh 2,500</option>
 </select>
+
 <p>🔵 Available　🔴 Selected　⚪ Unavailable</p>
+
 <div class="pitch">⚽ PLAYING FIELD ⚽</div>
+
+<h3 id="sectionTitle">Section 1</h3>
+<p id="sectionRange">Seats 1–200</p>
+
 <div id="seatGrid" class="seat-grid"></div>
+
+<div class="seat-controls">
+<button type="button" class="btn" id="previousPage">Previous</button>
+<span id="pageInfo" class="page-info">Page 1 of 50</span>
+<button type="button" class="btn" id="nextPage">Next</button>
+</div>
+
 <p id="seatSummary">Selected seats: None</p>
 <p id="totalSummary">Total: KSh 0</p>
 </div>
@@ -137,6 +174,7 @@ Blue seats are available. Confirm actual stadium availability before selling tic
 <h2>Book Your Tickets</h2>
 <div class="booking">
 <form id="bookingForm">
+
 <label for="customer">Your full name</label>
 <input type="text" id="customer" placeholder="Enter your name" maxlength="100" required>
 
@@ -151,12 +189,12 @@ Blue seats are available. Confirm actual stadium availability before selling tic
 <button type="submit" class="btn" id="submitButton">
 Book and Pay with M-Pesa
 </button>
+
 </form>
 <p id="result" role="status" aria-live="polite"></p>
 </div>
 </section>
 
-<!-- PAID TICKETS -->
 <section id="paidTickets">
 <h2>🎟️ YOUR TALANTA TICKETS</h2>
 <p class="ticket-confirmed">✓ M-Pesa Payment Confirmed</p>
@@ -179,6 +217,10 @@ Download / Print Tickets
 const WORKER_URL =
 "https://talantatickectstalanta-tickects.kfestus462.workers.dev";
 
+const TOTAL_SEATS = 10000;
+const SEATS_PER_PAGE = 200;
+const TOTAL_PAGES = Math.ceil(TOTAL_SEATS / SEATS_PER_PAGE);
+
 const seatGrid = document.getElementById("seatGrid");
 const ticketType = document.getElementById("ticketType");
 const selectedSeatsInput = document.getElementById("selectedSeats");
@@ -190,43 +232,99 @@ const bookingForm = document.getElementById("bookingForm");
 const submitButton = document.getElementById("submitButton");
 
 let selectedSeats = [];
+let currentPage = 1;
+
+// These seats are blocked in the existing configuration.
 const unavailableSeats = [5,12,19,26];
 
-for(let i=1;i<=32;i++){
-  const seat=document.createElement("button");
-  seat.type="button";
-  seat.textContent="S"+i;
-  seat.className="seat";
+function renderSeats(){
+  seatGrid.innerHTML = "";
 
-  if(unavailableSeats.includes(i)){
-    seat.classList.add("taken");
-    seat.disabled=true;
-  }else{
-    seat.addEventListener("click",()=>{
+  const firstSeat = (currentPage - 1) * SEATS_PER_PAGE + 1;
+  const lastSeat = Math.min(
+    currentPage * SEATS_PER_PAGE,
+    TOTAL_SEATS
+  );
+
+  document.getElementById("sectionTitle").textContent =
+    "Section " + currentPage;
+
+  document.getElementById("sectionRange").textContent =
+    "Seats " + firstSeat + "–" + lastSeat;
+
+  document.getElementById("pageInfo").textContent =
+    "Page " + currentPage + " of " + TOTAL_PAGES;
+
+  document.getElementById("previousPage").disabled =
+    currentPage === 1;
+
+  document.getElementById("nextPage").disabled =
+    currentPage === TOTAL_PAGES;
+
+  for(let i = firstSeat; i <= lastSeat; i++){
+    const seat = document.createElement("button");
+
+    seat.type = "button";
+    seat.textContent = "S" + i;
+    seat.className = "seat";
+
+    if(unavailableSeats.includes(i)){
+      seat.classList.add("taken");
+      seat.disabled = true;
+    }else{
       if(selectedSeats.includes(i)){
-        selectedSeats=selectedSeats.filter(s=>s!==i);
-        seat.classList.remove("selected");
-      }else{
-        selectedSeats.push(i);
         seat.classList.add("selected");
       }
-      updateTotal();
-    });
+
+      seat.addEventListener("click",()=>{
+        if(selectedSeats.includes(i)){
+          selectedSeats = selectedSeats.filter(s => s !== i);
+        }else{
+          selectedSeats.push(i);
+        }
+
+        renderSeats();
+        updateTotal();
+      });
+    }
+
+    seatGrid.appendChild(seat);
   }
-  seatGrid.appendChild(seat);
 }
 
+document.getElementById("previousPage").addEventListener("click",()=>{
+  if(currentPage > 1){
+    currentPage--;
+    renderSeats();
+  }
+});
+
+document.getElementById("nextPage").addEventListener("click",()=>{
+  if(currentPage < TOTAL_PAGES){
+    currentPage++;
+    renderSeats();
+  }
+});
+
 function updateTotal(){
-  const price=Number(ticketType.value);
-  const total=selectedSeats.length*price;
+  const price = Number(ticketType.value);
+  const total = selectedSeats.length * price;
 
-  const names=selectedSeats.slice().sort((a,b)=>a-b)
-    .map(s=>"S"+s).join(", ");
+  const names = selectedSeats.slice()
+    .sort((a,b)=>a-b)
+    .map(s=>"S"+s)
+    .join(", ");
 
-  seatSummary.textContent="Selected seats: "+(names||"None");
-  totalSummary.textContent="Total: KSh "+total.toLocaleString("en-KE");
-  bookingTotal.textContent="Total: KSh "+total.toLocaleString("en-KE");
-  selectedSeatsInput.value=names;
+  seatSummary.textContent =
+    "Selected seats: " + (names || "None");
+
+  totalSummary.textContent =
+    "Total: KSh " + total.toLocaleString("en-KE");
+
+  bookingTotal.textContent =
+    "Total: KSh " + total.toLocaleString("en-KE");
+
+  selectedSeatsInput.value = names;
 }
 
 ticketType.addEventListener("change",updateTotal);
@@ -236,115 +334,122 @@ function delay(ms){
 }
 
 async function apiRequest(path,options={}){
-  const response=await fetch(WORKER_URL+path,options);
+  const response = await fetch(WORKER_URL + path,options);
   let data;
 
   try{
-    data=await response.json();
+    data = await response.json();
   }catch{
     throw new Error("Server returned an invalid response.");
   }
 
-  if(!response.ok||data.success===false){
-    throw new Error(data.message||"Request failed.");
+  if(!response.ok || data.success === false){
+    throw new Error(data.message || "Request failed.");
   }
+
   return data;
 }
 
 // GENERATE AND DISPLAY PAID TICKETS
 function displayPaidTickets(bookingId,booking,tickets){
-  const container=document.getElementById("paidTickets");
-  const ticketList=document.getElementById("ticketList");
+  const container = document.getElementById("paidTickets");
+  const ticketList = document.getElementById("ticketList");
 
-  ticketList.innerHTML="";
+  ticketList.innerHTML = "";
 
-  if(!tickets||tickets.length===0){
-    result.textContent="Payment confirmed. Waiting for ticket generation.";
+  if(!tickets || tickets.length === 0){
+    result.textContent =
+      "Payment confirmed. Waiting for ticket generation.";
     return;
   }
 
-  if(typeof QRCode==="undefined"){
-    result.textContent="Payment confirmed, but QR library failed to load. Please reload the page to view your tickets.";
+  if(typeof QRCode === "undefined"){
+    result.textContent =
+      "Payment confirmed, but QR library failed to load. Please reload the page.";
     return;
   }
 
   tickets.forEach((ticket,index)=>{
-    const card=document.createElement("div");
-    card.className="paid-ticket";
+    const card = document.createElement("div");
+    card.className = "paid-ticket";
 
-    const heading=document.createElement("h3");
-    heading.textContent="TALANTA TICKET #"+(index+1);
+    const heading = document.createElement("h3");
+    heading.textContent = "TALANTA TICKET #" + (index + 1);
 
-    const match=document.createElement("p");
-    match.textContent="Bayern Munich vs Ajax";
+    const match = document.createElement("p");
+    match.textContent = "Bayern Munich vs Ajax";
 
-    const details=document.createElement("div");
-    details.className="ticket-details";
+    const details = document.createElement("div");
+    details.className = "ticket-details";
 
-    const customer=document.createElement("p");
-    customer.textContent="Customer: "+booking.customer_name;
+    const customer = document.createElement("p");
+    customer.textContent = "Customer: " + booking.customer_name;
 
-    const seat=document.createElement("p");
-    seat.textContent="Seat: S"+ticket.seat_number;
+    const seat = document.createElement("p");
+    seat.textContent = "Seat: S" + ticket.seat_number;
 
-    const reference=document.createElement("p");
-    reference.textContent="Booking reference: "+bookingId;
+    const reference = document.createElement("p");
+    reference.textContent = "Booking reference: " + bookingId;
 
-    const codeLabel=document.createElement("p");
-    codeLabel.textContent="Ticket verification code:";
+    const codeLabel = document.createElement("p");
+    codeLabel.textContent = "Ticket verification code:";
 
-    const code=document.createElement("p");
-    code.className="ticket-code";
-    code.textContent=ticket.ticket_code;
+    const code = document.createElement("p");
+    code.className = "ticket-code";
+    code.textContent = ticket.ticket_code;
 
-    const qr=document.createElement("div");
-    qr.className="ticket-qr";
+    const qr = document.createElement("div");
+    qr.className = "ticket-qr";
 
-    const confirmation=document.createElement("p");
-    confirmation.className="ticket-confirmed";
-    confirmation.textContent="✓ PAID";
+    const confirmation = document.createElement("p");
+    confirmation.className = "ticket-confirmed";
+    confirmation.textContent = "✓ PAID";
 
     details.append(customer,seat,reference);
     card.append(heading,match,details,codeLabel,code,qr,confirmation);
     ticketList.appendChild(card);
 
     new QRCode(qr,{
-      text:ticket.ticket_code,
-      width:180,
-      height:180,
-      correctLevel:QRCode.CorrectLevel.H
+      text: ticket.ticket_code,
+      width: 180,
+      height: 180,
+      correctLevel: QRCode.CorrectLevel.H
     });
   });
 
-  container.style.display="block";
+  container.style.display = "block";
   container.scrollIntoView({behavior:"smooth"});
 }
 
 // CHECK PAYMENT STATUS
 async function checkBookingStatus(bookingId){
-  result.textContent="Check your phone and enter your M-Pesa PIN. Waiting for payment confirmation...";
+  result.textContent =
+    "Check your phone and enter your M-Pesa PIN. Waiting for payment confirmation...";
 
-  for(let attempt=0;attempt<24;attempt++){
+  for(let attempt = 0; attempt < 24; attempt++){
     await delay(5000);
 
     try{
-      const data=await apiRequest(
-        "/api/bookings/"+encodeURIComponent(bookingId)
+      const data = await apiRequest(
+        "/api/bookings/" + encodeURIComponent(bookingId)
       );
 
-      if(data.booking.status==="PAID"){
-        result.textContent="PAYMENT CONFIRMED! Your Talanta tickets are ready.";
+      if(data.booking.status === "PAID"){
+        result.textContent =
+          "PAYMENT CONFIRMED! Your Talanta tickets are ready.";
 
         displayPaidTickets(
           bookingId,
           data.booking,
-          data.tickets||[]
+          data.tickets || []
         );
+
         return;
       }
 
-      if(data.booking.status==="FAILED"){
-        result.textContent="Payment was not completed. Please contact support. Booking reference: "+bookingId;
+      if(data.booking.status === "FAILED"){
+        result.textContent =
+          "Payment was not completed. Please contact support. Booking reference: " + bookingId;
         return;
       }
     }catch(error){
@@ -352,42 +457,48 @@ async function checkBookingStatus(bookingId){
     }
   }
 
-  result.textContent="Payment confirmation has not arrived yet. Please do not pay again immediately. Booking reference: "+bookingId+". Contact support if you have already entered your PIN.";
+  result.textContent =
+    "Payment confirmation has not arrived yet. Please do not pay again immediately. Booking reference: " +
+    bookingId + ". Contact support if you have already entered your PIN.";
 }
 
 // CREATE BOOKING AND REQUEST PAYMENT
 bookingForm.addEventListener("submit",async function(e){
   e.preventDefault();
 
-  if(selectedSeats.length===0){
-    result.textContent="Please select at least one seat.";
+  if(selectedSeats.length === 0){
+    result.textContent = "Please select at least one seat.";
     return;
   }
 
-  if(!bookingForm.reportValidity())return;
+  if(!bookingForm.reportValidity()) return;
 
-  const customerName=document.getElementById("customer").value.trim();
-  const phone=document.getElementById("phone").value.trim();
+  const customerName =
+    document.getElementById("customer").value.trim();
+
+  const phone =
+    document.getElementById("phone").value.trim();
 
   if(!customerName){
-    result.textContent="Please enter your full name.";
+    result.textContent = "Please enter your full name.";
     return;
   }
 
-  submitButton.disabled=true;
-  submitButton.textContent="Saving booking...";
-  result.textContent="Please wait. We are saving your booking.";
+  submitButton.disabled = true;
+  submitButton.textContent = "Saving booking...";
+  result.textContent = "Please wait. We are saving your booking.";
 
   try{
-    // SAVE BOOKING
-    const booking=await apiRequest("/api/bookings",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        customerName:customerName,
-        phone:phone,
-        seats:selectedSeats,
-        ticketType:Number(ticketType.value)===5000?"VIP":"Regular"
+    const booking = await apiRequest("/api/bookings",{
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        customerName: customerName,
+        phone: phone,
+        seats: selectedSeats,
+        ticketType: Number(ticketType.value) === 5000
+          ? "VIP"
+          : "Regular"
       })
     });
 
@@ -395,34 +506,39 @@ bookingForm.addEventListener("submit",async function(e){
       throw new Error("Booking reference was not returned.");
     }
 
-    result.textContent="Booking saved. Reference: "+booking.bookingId+". Requesting M-Pesa payment...";
+    result.textContent =
+      "Booking saved. Reference: " + booking.bookingId +
+      ". Requesting M-Pesa payment...";
 
-    // REQUEST M-PESA
-    submitButton.textContent="Sending M-Pesa prompt...";
+    submitButton.textContent = "Sending M-Pesa prompt...";
 
-    const payment=await apiRequest("/api/mpesa/stkpush",{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({bookingId:booking.bookingId})
+    const payment = await apiRequest("/api/mpesa/stkpush",{
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({
+        bookingId: booking.bookingId
+      })
     });
 
     if(!payment.success){
-      throw new Error(payment.message||"M-Pesa payment request failed.");
+      throw new Error(payment.message || "M-Pesa payment request failed.");
     }
 
-    submitButton.textContent="Waiting for payment...";
+    submitButton.textContent = "Waiting for payment...";
 
-    // CHECK PAYMENT
     await checkBookingStatus(booking.bookingId);
 
   }catch(error){
-    result.textContent="Notice: "+error.message+" If a booking was already created, contact support before submitting again.";
+    result.textContent =
+      "Notice: " + error.message +
+      " If a booking was already created, contact support before submitting again.";
   }finally{
-    submitButton.disabled=false;
-    submitButton.textContent="Book and Pay with M-Pesa";
+    submitButton.disabled = false;
+    submitButton.textContent = "Book and Pay with M-Pesa";
   }
 });
 
+renderSeats();
 updateTotal();
 </script>
 
