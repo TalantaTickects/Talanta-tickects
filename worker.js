@@ -35,14 +35,13 @@ function timestamp() {
   }).formatToParts(new Date());
 
   const values = {};
-  for (const part of parts) {
-    values[part.type] = part.value;
-  }
+  for (const part of parts) values[part.type] = part.value;
 
   return values.year + values.month + values.day +
     values.hour + values.minute + values.second;
 }
 
+// SAFARICOM LIVE OAUTH
 async function getToken(env) {
   const credentials = btoa(
     env.MPESA_CONSUMER_KEY + ":" + env.MPESA_CONSUMER_SECRET
@@ -51,7 +50,9 @@ async function getToken(env) {
   const response = await fetch(
     "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
     {
-      headers: { Authorization: "Basic " + credentials }
+      headers: {
+        Authorization: "Basic " + credentials
+      }
     }
   );
 
@@ -86,7 +87,10 @@ export default {
     }
 
     if (!env.DB) {
-      return json({ success: false, message: "Database is not connected." }, 500);
+      return json({
+        success: false,
+        message: "Database is not connected."
+      }, 500);
     }
 
     // CREATE BOOKING AND RESERVE SEATS
@@ -110,7 +114,9 @@ export default {
           !Array.isArray(seats) ||
           seats.length < 1 ||
           seats.length > 32 ||
-          !seats.every(s => Number.isInteger(s) && s >= 1 && s <= 32) ||
+          !seats.every(s =>
+            Number.isInteger(s) && s >= 1 && s <= 32
+          ) ||
           new Set(seats).size !== seats.length
         ) {
           return json({
@@ -126,7 +132,6 @@ export default {
           }, 400);
         }
 
-        // These seats are unavailable in the current website.
         const unavailable = [5, 12, 19, 26];
 
         if (seats.some(s => unavailable.includes(s))) {
@@ -197,7 +202,7 @@ export default {
       }
     }
 
-    // START ONE M-PESA PAYMENT FOR THE WHOLE BOOKING
+    // START M-PESA LIVE STK PUSH
     if (url.pathname === "/api/mpesa/stkpush" && request.method === "POST") {
       let paymentId = null;
 
@@ -240,7 +245,8 @@ export default {
 
         const previous = await env.DB.prepare(
           `SELECT id FROM payments
-           WHERE booking_id = ? AND status = 'PENDING'
+           WHERE booking_id = ?
+           AND status = 'PENDING'
            AND checkout_request_id IS NOT NULL`
         ).bind(bookingId).first();
 
@@ -294,10 +300,14 @@ export default {
 
         const result = await stkResponse.json();
 
-        if (!stkResponse.ok || result.ResponseCode !== "0" ||
-            !result.CheckoutRequestID) {
+        if (
+          !stkResponse.ok ||
+          result.ResponseCode !== "0" ||
+          !result.CheckoutRequestID
+        ) {
           await env.DB.prepare(
-            `UPDATE payments SET status = 'FAILED' WHERE id = ?`
+            `UPDATE payments SET status = 'FAILED'
+             WHERE id = ?`
           ).bind(paymentId).run();
 
           return json({
@@ -322,7 +332,8 @@ export default {
       } catch (error) {
         if (paymentId) {
           await env.DB.prepare(
-            `UPDATE payments SET status = 'FAILED' WHERE id = ?`
+            `UPDATE payments SET status = 'FAILED'
+             WHERE id = ?`
           ).bind(paymentId).run().catch(() => {});
         }
 
@@ -333,7 +344,7 @@ export default {
       }
     }
 
-    // CHECK BOOKING AND TICKET STATUS
+    // CHECK BOOKING AND TICKETS
     if (
       request.method === "GET" &&
       url.pathname.startsWith("/api/bookings/")
@@ -347,7 +358,10 @@ export default {
         ).bind(bookingId).first();
 
         if (!booking) {
-          return json({ success: false, message: "Booking not found." }, 404);
+          return json({
+            success: false,
+            message: "Booking not found."
+          }, 404);
         }
 
         const tickets = await env.DB.prepare(
@@ -369,32 +383,60 @@ export default {
       }
     }
 
-    // SAFARICOM CALLBACK
-    if (url.pathname === "/api/mpesa/callback" && request.method === "POST") {
+    // SAFARICOM PAYMENT CALLBACK
+    if (
+      url.pathname === "/api/mpesa/callback" &&
+      request.method === "POST"
+    ) {
       try {
         const callback = await request.json();
         const data = callback.Body?.stkCallback;
 
         if (!data?.CheckoutRequestID) {
-          return json({ ResultCode: 0, ResultDesc: "Accepted" });
+          return json({
+            ResultCode: 0,
+            ResultDesc: "Accepted"
+          });
         }
 
         const payment = await env.DB.prepare(
-          `SELECT id, booking_id, status
-           FROM payments WHERE checkout_request_id = ?`
+          `SELECT id, booking_id, phone, amount, status
+           FROM payments
+           WHERE checkout_request_id = ?`
         ).bind(data.CheckoutRequestID).first();
 
         if (!payment || payment.status === "PAID") {
-          return json({ ResultCode: 0, ResultDesc: "Accepted" });
+          return json({
+            ResultCode: 0,
+            ResultDesc: "Accepted"
+          });
         }
 
-        const paid = Number(data.ResultCode) === 0;
+        if (payment.status !== "PENDING") {
+          return json({
+            ResultCode: 0,
+            ResultDesc: "Accepted"
+          });
+        }
 
-        if (!paid) {
+        const booking = await env.DB.prepare(
+          `SELECT id, phone, amount, status
+           FROM bookings WHERE id = ?`
+        ).bind(payment.booking_id).first();
+
+        if (!booking || booking.status !== "PENDING") {
+          return json({
+            ResultCode: 1,
+            ResultDesc: "Booking is not payable"
+          }, 400);
+        }
+
+        // FAILED OR CANCELLED PAYMENT
+        if (Number(data.ResultCode) !== 0) {
           await env.DB.batch([
             env.DB.prepare(
               `UPDATE payments SET status = 'FAILED'
-               WHERE id = ?`
+               WHERE id = ? AND status = 'PENDING'`
             ).bind(payment.id),
 
             env.DB.prepare(
@@ -408,19 +450,48 @@ export default {
             ).bind(payment.booking_id)
           ]);
 
-          return json({ ResultCode: 0, ResultDesc: "Accepted" });
+          return json({
+            ResultCode: 0,
+            ResultDesc: "Accepted"
+          });
         }
 
         const items = data.CallbackMetadata?.Item || [];
-        const receipt = items.find(
-          item => item.Name === "MpesaReceiptNumber"
-        )?.Value;
 
-        if (!receipt) {
+        const getItem = name =>
+          items.find(item => item.Name === name)?.Value;
+
+        const receipt = getItem("MpesaReceiptNumber");
+        const paidAmount = Number(getItem("Amount"));
+        const paidPhone = normalizePhone(getItem("PhoneNumber"));
+
+        // VERIFY PAYMENT AMOUNT AND PHONE
+        if (
+          !receipt ||
+          !Number.isFinite(paidAmount) ||
+          paidAmount !== Number(payment.amount) ||
+          paidAmount !== Number(booking.amount) ||
+          !paidPhone ||
+          paidPhone !== payment.phone ||
+          paidPhone !== booking.phone
+        ) {
           return json({
             ResultCode: 1,
-            ResultDesc: "Payment receipt missing"
-          }, 500);
+            ResultDesc: "Payment details could not be verified"
+          }, 400);
+        }
+
+        // CHECK FOR DUPLICATE RECEIPT
+        const duplicateReceipt = await env.DB.prepare(
+          `SELECT id FROM payments
+           WHERE mpesa_receipt = ? AND id != ?`
+        ).bind(String(receipt), payment.id).first();
+
+        if (duplicateReceipt) {
+          return json({
+            ResultCode: 1,
+            ResultDesc: "Receipt already used"
+          }, 400);
         }
 
         const seats = await env.DB.prepare(
@@ -428,11 +499,18 @@ export default {
            WHERE booking_id = ? AND active = 1`
         ).bind(payment.booking_id).all();
 
+        if (!seats.results.length) {
+          return json({
+            ResultCode: 1,
+            ResultDesc: "No reserved seats found"
+          }, 400);
+        }
+
         const statements = [
           env.DB.prepare(
             `UPDATE payments
              SET status = 'PAID', mpesa_receipt = ?
-             WHERE id = ?`
+             WHERE id = ? AND status = 'PENDING'`
           ).bind(String(receipt), payment.id),
 
           env.DB.prepare(
@@ -442,10 +520,6 @@ export default {
         ];
 
         for (const item of seats.results) {
-          const ticketCode = crypto.randomUUID()
-            .replace(/-/g, "")
-            .toUpperCase();
-
           statements.push(
             env.DB.prepare(
               `INSERT OR IGNORE INTO tickets
@@ -455,14 +529,17 @@ export default {
               crypto.randomUUID(),
               payment.booking_id,
               String(item.seat_number),
-              ticketCode
+              crypto.randomUUID().replace(/-/g, "").toUpperCase()
             )
           );
         }
 
         await env.DB.batch(statements);
 
-        return json({ ResultCode: 0, ResultDesc: "Accepted" });
+        return json({
+          ResultCode: 0,
+          ResultDesc: "Accepted"
+        });
 
       } catch (error) {
         return json({
@@ -478,4 +555,3 @@ export default {
     }, 404);
   }
 };
-
