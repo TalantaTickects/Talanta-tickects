@@ -6,19 +6,16 @@ function json(data, status = 200) {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type"
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Cache-Control": "no-store"
     }
   });
 }
 
 function normalizePhone(phone) {
   let value = String(phone || "").replace(/\D/g, "");
-
   if (value.startsWith("0")) value = "254" + value.slice(1);
-  if (value.startsWith("7") || value.startsWith("1")) {
-    value = "254" + value;
-  }
-
+  if (value.startsWith("7") || value.startsWith("1")) value = "254" + value;
   return /^254[17]\d{8}$/.test(value) ? value : null;
 }
 
@@ -41,7 +38,6 @@ function timestamp() {
     values.hour + values.minute + values.second;
 }
 
-// SAFARICOM LIVE OAUTH
 async function getToken(env) {
   const credentials = btoa(
     env.MPESA_CONSUMER_KEY + ":" + env.MPESA_CONSUMER_SECRET
@@ -49,11 +45,7 @@ async function getToken(env) {
 
   const response = await fetch(
     "https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
-    {
-      headers: {
-        Authorization: "Basic " + credentials
-      }
-    }
+    { headers: { Authorization: "Basic " + credentials } }
   );
 
   const data = await response.json();
@@ -66,9 +58,7 @@ async function getToken(env) {
 }
 
 function getPassword(env, time) {
-  return btoa(
-    env.MPESA_SHORTCODE + env.MPESA_PASSKEY + time
-  );
+  return btoa(env.MPESA_SHORTCODE + env.MPESA_PASSKEY + time);
 }
 
 export default {
@@ -93,11 +83,30 @@ export default {
       }, 500);
     }
 
-    // CREATE BOOKING AND RESERVE SEATS
+    // LIVE SEAT AVAILABILITY
+    if (url.pathname === "/api/seats" && request.method === "GET") {
+      try {
+        const result = await env.DB.prepare(
+          `SELECT seat_number FROM booking_seats WHERE active = 1`
+        ).all();
+
+        return json({
+          success: true,
+          totalSeats: 10000,
+          occupiedSeats: result.results.map(row => Number(row.seat_number))
+        });
+      } catch (error) {
+        return json({
+          success: false,
+          message: "Could not load seat availability."
+        }, 500);
+      }
+    }
+
+    // CREATE BOOKING
     if (url.pathname === "/api/bookings" && request.method === "POST") {
       try {
         const body = await request.json();
-
         const customerName = String(body.customerName || "").trim();
         const phone = normalizePhone(body.phone);
         const seats = body.seats;
@@ -110,18 +119,19 @@ export default {
           }, 400);
         }
 
+        // Maximum 50 tickets in one booking
         if (
           !Array.isArray(seats) ||
           seats.length < 1 ||
-          seats.length > 32 ||
+          seats.length > 50 ||
           !seats.every(s =>
-            Number.isInteger(s) && s >= 1 && s <= 32
+            Number.isInteger(s) && s >= 1 && s <= 10000
           ) ||
           new Set(seats).size !== seats.length
         ) {
           return json({
             success: false,
-            message: "Please select valid seats."
+            message: "Select between 1 and 50 valid seats."
           }, 400);
         }
 
@@ -132,20 +142,7 @@ export default {
           }, 400);
         }
 
-        const unavailable = [5, 12, 19, 26];
-
-        if (seats.some(s => unavailable.includes(s))) {
-          return json({
-            success: false,
-            message: "One or more selected seats are unavailable."
-          }, 409);
-        }
-
         const sortedSeats = [...seats].sort((a, b) => a - b);
-        const price = ticketType === "VIP" ? 5000 : 2500;
-        const amount = sortedSeats.length * price;
-        const bookingId = crypto.randomUUID();
-
         const placeholders = sortedSeats.map(() => "?").join(",");
 
         const occupied = await env.DB.prepare(
@@ -153,12 +150,16 @@ export default {
            WHERE active = 1 AND seat_number IN (${placeholders})`
         ).bind(...sortedSeats).all();
 
-        if (occupied.results.length > 0) {
+        if (occupied.results.length) {
           return json({
             success: false,
-            message: "Some seats have already been booked. Please choose other seats."
+            message: "Some selected seats are already reserved. Please choose other seats."
           }, 409);
         }
+
+        const price = ticketType === "VIP" ? 5000 : 2500;
+        const amount = sortedSeats.length * price;
+        const bookingId = crypto.randomUUID();
 
         const statements = [
           env.DB.prepare(
@@ -193,16 +194,15 @@ export default {
           amount,
           message: "Booking saved. You can now request payment."
         });
-
       } catch (error) {
         return json({
           success: false,
-          message: "Booking could not be saved. The seats may have just been taken."
+          message: "Booking could not be saved. A selected seat may have just been reserved."
         }, 409);
       }
     }
 
-    // START M-PESA LIVE STK PUSH
+    // START LIVE M-PESA STK PUSH
     if (url.pathname === "/api/mpesa/stkpush" && request.method === "POST") {
       let paymentId = null;
 
@@ -227,7 +227,7 @@ export default {
         ) {
           return json({
             success: false,
-            message: "M-Pesa settings are incomplete."
+            message: "Live M-Pesa settings are incomplete."
           }, 500);
         }
 
@@ -263,18 +263,12 @@ export default {
           `INSERT INTO payments
            (id, booking_id, phone, amount, status)
            VALUES (?, ?, ?, ?, 'PENDING')`
-        ).bind(
-          paymentId,
-          booking.id,
-          booking.phone,
-          booking.amount
-        ).run();
+        ).bind(paymentId, booking.id, booking.phone, booking.amount).run();
 
         const token = await getToken(env);
         const time = timestamp();
-        const password = getPassword(env, time);
 
-        const stkResponse = await fetch(
+        const response = await fetch(
           "https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
           {
             method: "POST",
@@ -284,7 +278,7 @@ export default {
             },
             body: JSON.stringify({
               BusinessShortCode: env.MPESA_SHORTCODE,
-              Password: password,
+              Password: getPassword(env, time),
               Timestamp: time,
               TransactionType: "CustomerBuyGoodsOnline",
               Amount: booking.amount,
@@ -298,16 +292,15 @@ export default {
           }
         );
 
-        const result = await stkResponse.json();
+        const result = await response.json();
 
         if (
-          !stkResponse.ok ||
+          !response.ok ||
           result.ResponseCode !== "0" ||
           !result.CheckoutRequestID
         ) {
           await env.DB.prepare(
-            `UPDATE payments SET status = 'FAILED'
-             WHERE id = ?`
+            `UPDATE payments SET status = 'FAILED' WHERE id = ?`
           ).bind(paymentId).run();
 
           return json({
@@ -317,9 +310,7 @@ export default {
         }
 
         await env.DB.prepare(
-          `UPDATE payments
-           SET checkout_request_id = ?
-           WHERE id = ?`
+          `UPDATE payments SET checkout_request_id = ? WHERE id = ?`
         ).bind(result.CheckoutRequestID, paymentId).run();
 
         return json({
@@ -328,12 +319,10 @@ export default {
           bookingId,
           checkoutRequestId: result.CheckoutRequestID
         });
-
       } catch (error) {
         if (paymentId) {
           await env.DB.prepare(
-            `UPDATE payments SET status = 'FAILED'
-             WHERE id = ?`
+            `UPDATE payments SET status = 'FAILED' WHERE id = ?`
           ).bind(paymentId).run().catch(() => {});
         }
 
@@ -374,7 +363,6 @@ export default {
           booking,
           tickets: tickets.results
         });
-
       } catch (error) {
         return json({
           success: false,
@@ -383,40 +371,23 @@ export default {
       }
     }
 
-    // SAFARICOM PAYMENT CALLBACK
-    if (
-      url.pathname === "/api/mpesa/callback" &&
-      request.method === "POST"
-    ) {
+    // M-PESA CALLBACK
+    if (url.pathname === "/api/mpesa/callback" && request.method === "POST") {
       try {
         const callback = await request.json();
         const data = callback.Body?.stkCallback;
 
         if (!data?.CheckoutRequestID) {
-          return json({
-            ResultCode: 0,
-            ResultDesc: "Accepted"
-          });
+          return json({ ResultCode: 0, ResultDesc: "Accepted" });
         }
 
         const payment = await env.DB.prepare(
           `SELECT id, booking_id, phone, amount, status
-           FROM payments
-           WHERE checkout_request_id = ?`
+           FROM payments WHERE checkout_request_id = ?`
         ).bind(data.CheckoutRequestID).first();
 
-        if (!payment || payment.status === "PAID") {
-          return json({
-            ResultCode: 0,
-            ResultDesc: "Accepted"
-          });
-        }
-
-        if (payment.status !== "PENDING") {
-          return json({
-            ResultCode: 0,
-            ResultDesc: "Accepted"
-          });
+        if (!payment || payment.status !== "PENDING") {
+          return json({ ResultCode: 0, ResultDesc: "Accepted" });
         }
 
         const booking = await env.DB.prepare(
@@ -425,47 +396,35 @@ export default {
         ).bind(payment.booking_id).first();
 
         if (!booking || booking.status !== "PENDING") {
-          return json({
-            ResultCode: 1,
-            ResultDesc: "Booking is not payable"
-          }, 400);
+          return json({ ResultCode: 0, ResultDesc: "Accepted" });
         }
 
-        // FAILED OR CANCELLED PAYMENT
         if (Number(data.ResultCode) !== 0) {
           await env.DB.batch([
             env.DB.prepare(
               `UPDATE payments SET status = 'FAILED'
                WHERE id = ? AND status = 'PENDING'`
             ).bind(payment.id),
-
             env.DB.prepare(
               `UPDATE bookings SET status = 'FAILED'
                WHERE id = ? AND status = 'PENDING'`
             ).bind(payment.booking_id),
-
             env.DB.prepare(
               `UPDATE booking_seats SET active = 0
                WHERE booking_id = ?`
             ).bind(payment.booking_id)
           ]);
 
-          return json({
-            ResultCode: 0,
-            ResultDesc: "Accepted"
-          });
+          return json({ ResultCode: 0, ResultDesc: "Accepted" });
         }
 
         const items = data.CallbackMetadata?.Item || [];
-
-        const getItem = name =>
-          items.find(item => item.Name === name)?.Value;
+        const getItem = name => items.find(item => item.Name === name)?.Value;
 
         const receipt = getItem("MpesaReceiptNumber");
         const paidAmount = Number(getItem("Amount"));
         const paidPhone = normalizePhone(getItem("PhoneNumber"));
 
-        // VERIFY PAYMENT AMOUNT AND PHONE
         if (
           !receipt ||
           !Number.isFinite(paidAmount) ||
@@ -481,7 +440,6 @@ export default {
           }, 400);
         }
 
-        // CHECK FOR DUPLICATE RECEIPT
         const duplicateReceipt = await env.DB.prepare(
           `SELECT id FROM payments
            WHERE mpesa_receipt = ? AND id != ?`
@@ -512,7 +470,6 @@ export default {
              SET status = 'PAID', mpesa_receipt = ?
              WHERE id = ? AND status = 'PENDING'`
           ).bind(String(receipt), payment.id),
-
           env.DB.prepare(
             `UPDATE bookings SET status = 'PAID'
              WHERE id = ? AND status = 'PENDING'`
@@ -536,11 +493,7 @@ export default {
 
         await env.DB.batch(statements);
 
-        return json({
-          ResultCode: 0,
-          ResultDesc: "Accepted"
-        });
-
+        return json({ ResultCode: 0, ResultDesc: "Accepted" });
       } catch (error) {
         return json({
           ResultCode: 1,
